@@ -29,7 +29,6 @@ import datetime
 import json
 import queue
 import struct
-import re
 
 from udsoncan.client import Client
 from udsoncan.exceptions import TimeoutException
@@ -40,7 +39,7 @@ from udsoncan import services, Response, MemoryLocation
 import isotp
 from isotp import CanMessage
 from functools import partial
-
+from ctypes import *
 GRPBOX_WIDTH    = 200
 
 DIAG_HEIGHT = 470
@@ -267,14 +266,18 @@ class ZCAN_CCDiag(tk.Tk):
         self.isotp_layer = isotp.TransportLayer(rxfn=self.isotp_rcv, txfn=self.isotp_send, address=self._isotpaddr_PHYS, params=self.isotp_params)
         self.conn = ZCAN_CCDiag.IsoTpConnection(isotp_layer = self.isotp_layer)
         self.udsclient = Client(self.conn, request_timeout= 2)
+        self.udsclient.config['p2_timeout'] == 3
         self.udsclient.config['security_algo'] = self.SecAlgo
         self.udsclient.config['security_algo_params'] = [0x4FE87269, 0x6BC361D8, 0x9B127D51, 0x5BA41903]
         self.udsclient.config['data_identifiers'] = {
-            0xF1A8 : udsoncan.DidCodec('B'),
-            0xF190 : udsoncan.DidCodec('BBBBBBBBBBBBBBBB'),       # Codec that read ASCII string. We must tell the length of the string
-            0x0110 : udsoncan.DidCodec('B'),
+            0xF1A8: udsoncan.DidCodec('B'),
+            0xF190: udsoncan.DidCodec('BBBBBBBBBBBBBBBBB'),       # VIN Codec that read ASCII string. We must tell the length of the string
+            0xF102: udsoncan.DidCodec('BBBBBBBBBBBBBBBBB'),
+            0x0110: udsoncan.DidCodec('B'),                        #工厂模式
+            0xF184: udsoncan.DidCodec('BBBBBBBBBB'),                #应用软件指纹信息
             0xF189: udsoncan.DidCodec('BBBBBBBBBBBBBBBBB'),
-            0xF199 : udsoncan.DidCodec('BBBBBBB')
+            0xF199: udsoncan.DidCodec('BBBBBBB'),
+            0x0310: udsoncan.DidCodec('BBBBB')                         #EOL
             }
         self.udsclient.config['server_address_format'] = 32
         self.udsclient.config['server_memorysize_format'] = 32
@@ -439,8 +442,8 @@ class ZCAN_CCDiag(tk.Tk):
         self.btnINSCali["state"] = tk.DISABLED
 
         self.strvC11Config = tk.StringVar()
-        self.strvC11Config.set("预留2")
-        self.btnC11Config = ttk.Button(self.frameesc, textvariable=self.strvC11Config, command=self.BtnC11Config_Click)
+        self.strvC11Config.set("写入VIN")
+        self.btnC11Config = ttk.Button(self.frameesc, textvariable=self.strvC11Config, command=self.BtnVINConfig_Click)
         self.btnC11Config.grid(row=1, column=1, padx=3, pady=3)
         self.btnC11Config["state"] = tk.DISABLED
 
@@ -696,8 +699,9 @@ class ZCAN_CCDiag(tk.Tk):
         else:
             output_key_temp = temp_key
 
+        output_key_temp = 0#工厂模式
         output_key = struct.pack('BBBB', (output_key_temp>>24)&0xFF, (output_key_temp>>16)&0xFF, (output_key_temp>>8)&0xFF, output_key_temp&0xFF)
-
+        print(output_key)
         return output_key
 
     def getDateTimeBytes(self):
@@ -908,13 +912,16 @@ class ZCAN_CCDiag(tk.Tk):
         except:
             messagebox.showerror(title="INS Calibration", message="INS标定失败！")
 
-    def BtnC11Config_Click(self):
-        self.udsclient.change_session(1)
+    def BtnVINConfig_Click(self):
+        #self.udsclient.change_session(1)
         try:
             self.udsclient.change_session(3)
-            self.udsclient.unlock_security_access(1)
-            #resp_2 = self.udsclient.write_data_by_identifier(did = 0xF190, value = 0x0F)
-            resp_1 = self.udsclient.write_data_by_identifier(did = 0xF1A8, value = 0x0F)
+            self.udsclient.unlock_security_access(0x01)
+            write_data_list = []
+            for i in range(17):
+                write_data_list.append(0xFF)
+            print(len(write_data_list))
+            resp_1 = self.udsclient.write_data_by_identifier(did = 0xF190, value = tuple(write_data_list))
             if resp_1.positive :
                 messagebox.showinfo(title='Variant Confiuration', message='Confiure Success！')
         except:
@@ -1261,7 +1268,7 @@ class ZCAN_CCDiag(tk.Tk):
             #print("fdlen %d",fdlen)
             retmsg = isotp.CanMessage(arbitration_id=can_msgs[0].frame.can_id, data=bytearray(list),
                                       dlc=fdlen, extended_id=False, is_fd=True, bitrate_switch=True)
-            #print("%s" % binascii.hexlify(can_msgs[0].frame.data))
+            print("rcv %s" % binascii.hexlify(can_msgs[0].frame.data))
         else:
             retmsg = None
         return retmsg
@@ -1269,14 +1276,34 @@ class ZCAN_CCDiag(tk.Tk):
     def isotp_send(self, isotp_msg):
         msg = ZCAN_TransmitFD_Data()
         msg.frame.can_id = isotp_msg.arbitration_id
-        msg.frame.len = isotp_msg.dlc
+        # canfd dlc转len
+        fdlen = 0
+        fddlc = isotp_msg.dlc
+        if fddlc <= 8:
+            fdlen = 8
+        elif fddlc == 9:
+            fdlen = 12
+        elif fddlc == 10:
+            fdlen = 16
+        elif fddlc == 11:
+            fdlen = 20
+        elif fddlc == 12:
+            fdlen = 24
+        elif fddlc == 13:
+            fdlen = 32
+        elif fddlc == 14:
+            fdlen = 48
+        elif fddlc == 15:
+            fdlen = 64
+        msg.frame.len = fdlen
         msg.frame.rtr = 0  # 数据帧
         msg.frame.eff = 0  # 帧类型
         msg.frame.brs = 1  # CAN类型
 
         for i in range(len(isotp_msg.data)):
             msg.frame.data[i] = isotp_msg.data[i]
-
+        print(msg.frame.len)
+        print("send %s" % binascii.hexlify(msg.frame.data))
         ret = self._zcan.TransmitFD(self._can_handle, msg, 1)
         if ret != 1:
             messagebox.showerror(title="发送报文", message="发送失败！")
