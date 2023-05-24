@@ -40,6 +40,8 @@ import isotp
 from isotp import CanMessage
 from functools import partial
 from ctypes import *
+from ctypes import cdll
+seedDll = cdll.LoadLibrary("./HYCAN_SA_LDR64.dll")
 GRPBOX_WIDTH    = 200
 
 DIAG_HEIGHT = 470
@@ -253,7 +255,7 @@ class ZCAN_CCDiag(tk.Tk):
             'stmin' : 32,                          # Will request the sender to wait 32ms between consecutive frame. 0-127ms or 100-900ns with values from 0xF1-0xF9
             'blocksize' : 8,                       # Request the sender to send 8 consecutives frames before sending a new flow control message
             'wftmax' : 0,                          # Number of wait frame allowed before triggering an error
-            'tx_data_length' : 64,                  # Link layer (CAN layer) works with 8 byte payload (CAN 2.0)
+            'tx_data_length' : 8,                  # Link layer (CAN layer) works with 8 byte payload (CAN 2.0)
             'tx_padding' : 0xAA,                      # Will pad all transmitted CAN messages with byte 0x00. None means no padding
             'rx_flowcontrol_timeout' : 1000,        # Triggers a timeout if a flow control is awaited for more than 1000 milliseconds
             'rx_consecutive_frame_timeout' : 1000,  # Triggers a timeout if a consecutive frame is awaited for more than 1000 milliseconds
@@ -683,23 +685,27 @@ class ZCAN_CCDiag(tk.Tk):
         """
         temp_key = (seed[0]<<24) | (seed[1] << 16) | (seed[2] << 8) | (seed[3])
         if level == 0x01:
-            output_key_temp = ((((temp_key >> 4) ^ temp_key) << 3) ^ temp_key) & 0xFFFFFFFF
+            #output_key_temp = ((((temp_key >> 4) ^ temp_key) << 3) ^ temp_key) & 0xFFFFFFFF
+            output_key_temp = seedDll.HYCAN_SA_LDR(0x01,temp_key)
+            print("seed",hex(output_key_temp))
         elif level == 0x11:
-            _temp_y = ((temp_key<<24) & 0xFF000000) + ((temp_key<<8) & 0xFF0000) + ((temp_key>>8) & 0xFF00) + ((temp_key>>24) & 0xFF)
-            _temp_z = 0
-            _temp_sum = 0
-            for i in range(64):
-                _temp_y += ((((_temp_z<<4) ^ (_temp_z>>5)) + _temp_z) ^ (_temp_sum + params[_temp_sum&0x3])) & 0xFFFFFFFF
-                _temp_y = _temp_y & 0xFFFFFFFF
-                _temp_sum += 0x8F750A1D
-                _temp_sum = _temp_sum & 0xFFFFFFFF 
-                _temp_z += ((((_temp_y<<4) ^ (_temp_y>>5)) + _temp_y) ^ (_temp_sum + params[(_temp_sum>>11)&0x3])) & 0xFFFFFFFF
-                _temp_z = _temp_z & 0xFFFFFFFF
-            output_key_temp = (((_temp_z<<24) & 0xFF000000) | ((_temp_z<<8) & 0xFF0000) | ((_temp_z>>8) & 0xFF00) | ((_temp_z>>24) & 0xFF))
+            # _temp_y = ((temp_key<<24) & 0xFF000000) + ((temp_key<<8) & 0xFF0000) + ((temp_key>>8) & 0xFF00) + ((temp_key>>24) & 0xFF)
+            # _temp_z = 0
+            # _temp_sum = 0
+            # for i in range(64):
+            #     _temp_y += ((((_temp_z<<4) ^ (_temp_z>>5)) + _temp_z) ^ (_temp_sum + params[_temp_sum&0x3])) & 0xFFFFFFFF
+            #     _temp_y = _temp_y & 0xFFFFFFFF
+            #     _temp_sum += 0x8F750A1D
+            #     _temp_sum = _temp_sum & 0xFFFFFFFF
+            #     _temp_z += ((((_temp_y<<4) ^ (_temp_y>>5)) + _temp_y) ^ (_temp_sum + params[(_temp_sum>>11)&0x3])) & 0xFFFFFFFF
+            #     _temp_z = _temp_z & 0xFFFFFFFF
+            # output_key_temp = (((_temp_z<<24) & 0xFF000000) | ((_temp_z<<8) & 0xFF0000) | ((_temp_z>>8) & 0xFF00) | ((_temp_z>>24) & 0xFF))
+            output_key_temp = seedDll.HYCAN_SA_LDR(0x11,temp_key)
+            print("seed",hex(output_key_temp))
         else:
             output_key_temp = temp_key
 
-        output_key_temp = 0#工厂模式
+        #output_key_temp = 0#工厂模式
         output_key = struct.pack('BBBB', (output_key_temp>>24)&0xFF, (output_key_temp>>16)&0xFF, (output_key_temp>>8)&0xFF, output_key_temp&0xFF)
         print(output_key)
         return output_key
